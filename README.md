@@ -14,9 +14,12 @@ This plugin allows Flutter code to interact with USB serial devices connected to
 
 Add a dependency to your pubspec.yaml
 
-```dart
+```yaml
 dependencies:
-	usb_serial: ^0.5.0
+  usb_serial:
+    git:
+      url: https://github.com/AppsDevTeam/usbserial.git
+      ref: v0.5.1
 ```
 
 include the usbserial package at the top of your dart file.
