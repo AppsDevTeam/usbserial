@@ -184,7 +184,8 @@ class UsbPort extends AsyncDataSinkSource {
     _stopBits = stopBits;
     _parity = parity;
 
-    return await _channel.invokeMethod("setPortParameters", {"baudRate": baudRate, "dataBits": dataBits, "stopBits": stopBits, "parity": parity});
+    return await _channel.invokeMethod(
+        "setPortParameters", {"baudRate": baudRate, "dataBits": dataBits, "stopBits": stopBits, "parity": parity});
   }
 
   /// Sets the flow control parameter.
@@ -307,14 +308,12 @@ class UsbDevice {
   /// The number of interfaces on this UsbPort
   final int? interfaceCount;
 
-  UsbDevice(
-      this.deviceName, this.vid, this.pid, this.productName,
-      this.manufacturerName, this.deviceId, this.serial, this.interfaceCount);
+  UsbDevice(this.deviceName, this.vid, this.pid, this.productName, this.manufacturerName, this.deviceId, this.serial,
+      this.interfaceCount);
 
   static UsbDevice fromJSON(dynamic json) {
-    return UsbDevice(
-        json["deviceName"], json["vid"], json["pid"], json["productName"],
-        json["manufacturerName"], json["deviceId"], json["serialNumber"], json["interfaceCount"]);
+    return UsbDevice(json["deviceName"], json["vid"], json["pid"], json["productName"], json["manufacturerName"],
+        json["deviceId"], json["serialNumber"], json["interfaceCount"]);
   }
 
   @override
@@ -411,7 +410,8 @@ class UsbSerial {
   /// UsbPort port = await UsbSerial.create(0x1000, 0x2000);
   /// ```
   static Future<UsbPort?> create(int vid, int pid, [String type = "", int interface = -1]) async {
-    String? methodChannelName = await _channel.invokeMethod("create", {"type": type, "vid": vid, "pid": pid, "deviceId": -1, "interface": interface});
+    String? methodChannelName = await _channel
+        .invokeMethod("create", {"type": type, "vid": vid, "pid": pid, "deviceId": -1, "interface": interface});
 
     if (methodChannelName == null) {
       return null;
@@ -429,13 +429,26 @@ class UsbSerial {
   /// [type] = One of [UserSerial.CDC], [UsbSerial.CH34x], [UsbSerial.CP210x], [UsbSerial.FTDI], [UsbSerial.PL2303] or empty for auto detect.
   /// [interface] = Interface of the Usb Interface, -1 for auto detect.
   static Future<UsbPort?> createFromDeviceId(int? deviceId, [String type = "", int interface = -1]) async {
-    String? methodChannelName = await _channel.invokeMethod("create", {"type": type, "vid": -1, "pid": -1, "deviceId": deviceId, "interface": interface});
+    String? methodChannelName = await _channel
+        .invokeMethod("create", {"type": type, "vid": -1, "pid": -1, "deviceId": deviceId, "interface": interface});
 
     if (methodChannelName == null) {
       return null;
     }
 
     return new UsbPort(methodChannelName);
+  }
+
+  /// Creates a raw USB connection (bulk transfer) for devices that aren't
+  /// recognized as serial devices (e.g. ESC/POS printers).
+  static Future<UsbPort?> createRawFromDeviceId(int? deviceId) async {
+    String? methodChannelName = await _channel.invokeMethod("createRaw", {"vid": -1, "pid": -1, "deviceId": deviceId});
+
+    if (methodChannelName == null) {
+      return null;
+    }
+
+    return UsbPort(methodChannelName);
   }
 
   /// Returns a list of UsbDevices currently plugged in.

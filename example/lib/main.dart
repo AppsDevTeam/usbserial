@@ -28,17 +28,17 @@ class _MyAppState extends State<MyApp> {
     _serialData.clear();
 
     if (_subscription != null) {
-      _subscription!.cancel();
+      _subscription?.cancel();
       _subscription = null;
     }
 
     if (_transaction != null) {
-      _transaction!.dispose();
+      _transaction?.dispose();
       _transaction = null;
     }
 
     if (_port != null) {
-      _port!.close();
+      _port?.close();
       _port = null;
     }
 
@@ -50,8 +50,33 @@ class _MyAppState extends State<MyApp> {
       return true;
     }
 
-    _port = await device.create();
-    if (await (_port!.open()) != true) {
+    // Try serial mode first, then fall back to raw bulk USB.
+    bool opened = false;
+    try {
+      _port = await device.create();
+      if (_port != null) {
+        opened = await (_port?.open()) ?? false;
+      }
+    } catch (e) {
+      // Serial create/open threw (e.g. "Not a Serial device") — will try raw below.
+      _port = null;
+      opened = false;
+    }
+
+    if (!opened) {
+      // Serial open failed — try raw USB (for direct USB printers etc.)
+      try {
+        _port = await UsbSerial.createRawFromDeviceId(device.deviceId);
+        if (_port != null) {
+          opened = await (_port?.open()) ?? false;
+        }
+      } catch (e) {
+        _port = null;
+        opened = false;
+      }
+    }
+
+    if (!opened || _port == null) {
       setState(() {
         _status = "Failed to open port";
       });
@@ -59,20 +84,23 @@ class _MyAppState extends State<MyApp> {
     }
     _device = device;
 
-    await _port!.setDTR(true);
-    await _port!.setRTS(true);
-    await _port!.setPortParameters(115200, UsbPort.DATABITS_8, UsbPort.STOPBITS_1, UsbPort.PARITY_NONE);
+    await _port?.setDTR(true);
+    await _port?.setRTS(true);
+    await _port?.setPortParameters(115200, UsbPort.DATABITS_8, UsbPort.STOPBITS_1, UsbPort.PARITY_NONE);
 
-    _transaction = Transaction.stringTerminated(_port!.inputStream as Stream<Uint8List>, Uint8List.fromList([13, 10]));
+    Stream<Uint8List>? inputStream = _port?.inputStream;
+    if (inputStream != null) {
+      _transaction = Transaction.stringTerminated(inputStream, Uint8List.fromList([13, 10]));
 
-    _subscription = _transaction!.stream.listen((String line) {
-      setState(() {
-        _serialData.add(Text(line));
-        if (_serialData.length > 20) {
-          _serialData.removeAt(0);
-        }
+      _subscription = _transaction?.stream.listen((String line) {
+        setState(() {
+          _serialData.add(Text(line));
+          if (_serialData.length > 20) {
+            _serialData.removeAt(0);
+          }
+        });
       });
-    });
+    }
 
     setState(() {
       _status = "Connected";
@@ -134,7 +162,9 @@ class _MyAppState extends State<MyApp> {
       ),
       body: ListView(
         children: <Widget>[
-          Center(child: Text(_ports.length > 0 ? "Available Serial Ports" : "No serial devices available", style: Theme.of(context).textTheme.titleLarge)),
+          Center(
+              child: Text(_ports.length > 0 ? "Available Serial Ports" : "No serial devices available",
+                  style: Theme.of(context).textTheme.titleLarge)),
           ..._ports,
           Center(child: Text('Status: $_status\n')),
           Center(child: Text('info: ${_port.toString()}\n')),
@@ -155,7 +185,7 @@ class _MyAppState extends State<MyApp> {
                         return;
                       }
                       String data = _textController.text + "\r\n";
-                      await _port!.write(Uint8List.fromList(data.codeUnits));
+                      await _port?.write(Uint8List.fromList(data.codeUnits));
                       _textController.text = "";
                     },
             ),

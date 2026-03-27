@@ -1,9 +1,18 @@
 package dev.bessems.usbserial;
 
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import android.content.Context;
+
+import com.felhr.usbserial.UsbSerialDevice;
+
 import android.annotation.SuppressLint;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
-import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.hardware.usb.UsbDevice;
@@ -11,25 +20,14 @@ import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbManager;
 import android.os.Build;
 import android.util.Log;
-
-import com.felhr.usbserial.UsbSerialDevice;
-
-import java.lang.reflect.Method;
-import java.util.HashMap;
-import java.util.List;
-import java.util.ArrayList;
-import java.util.Map;
-
+import androidx.annotation.NonNull;
+import io.flutter.embedding.engine.plugins.FlutterPlugin;
+import io.flutter.plugin.common.BinaryMessenger;
+import io.flutter.plugin.common.EventChannel;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
 import io.flutter.plugin.common.MethodChannel.Result;
-import io.flutter.plugin.common.EventChannel;
-import io.flutter.embedding.engine.plugins.FlutterPlugin;
-import io.flutter.plugin.common.BinaryMessenger;
-
-import androidx.annotation.NonNull;
-
 
 /** UsbSerialPlugin */
 public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventChannel.StreamHandler {
@@ -45,7 +43,6 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
     private static final String ACTION_USB_PERMISSION = "com.android.example.USB_PERMISSION";
     public static final String ACTION_USB_ATTACHED = "android.hardware.usb.action.USB_DEVICE_ATTACHED";
     public static final String ACTION_USB_DETACHED = "android.hardware.usb.action.USB_DEVICE_DETACHED";
-
 
     private final BroadcastReceiver usbReceiver = new BroadcastReceiver() {
 
@@ -102,20 +99,21 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
         m_InterfaceId = 0;
     }
 
-
     private interface AcquirePermissionCallback {
         void onSuccess(UsbDevice device);
+
         void onFailed(UsbDevice device);
     }
+
     @SuppressLint("PrivateApi")
     private void acquirePermissions(UsbDevice device, AcquirePermissionCallback cb) {
 
-        class BRC2 extends  BroadcastReceiver {
+        class BRC2 extends BroadcastReceiver {
 
             private final UsbDevice m_Device;
             private final AcquirePermissionCallback m_CB;
 
-            BRC2(UsbDevice device, AcquirePermissionCallback cb ) {
+            BRC2(UsbDevice device, AcquirePermissionCallback cb) {
                 m_Device = device;
                 m_CB = cb;
             }
@@ -141,7 +139,7 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
             }
         }
 
-        Context cw = m_Context; //m_Registrar.context();
+        Context cw = m_Context; // m_Registrar.context();
 
         BRC2 usbReceiver = new BRC2(device, cb);
 
@@ -168,7 +166,7 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
         IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            cw.registerReceiver(usbReceiver, filter, null, null, Context.RECEIVER_NOT_EXPORTED);
+            cw.registerReceiver(usbReceiver, filter, null, null, Context.RECEIVER_EXPORTED);
         } else {
             cw.registerReceiver(usbReceiver, filter);
         }
@@ -194,13 +192,13 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
         try {
             UsbDeviceConnection connection = m_Manager.openDevice(device);
 
-            if ( connection == null && allowAcquirePermission ) {
+            if (connection == null && allowAcquirePermission) {
                 acquirePermissions(device, cb);
                 return;
             }
 
             UsbSerialDevice serialDeviceDevice;
-            if ( type.equals("") ) {
+            if (type.equals("")) {
                 serialDeviceDevice = UsbSerialDevice.createUsbSerialDevice(device, connection, iface);
             } else {
                 serialDeviceDevice = UsbSerialDevice.createUsbSerialDevice(type, device, connection, iface);
@@ -208,21 +206,22 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
 
             if (serialDeviceDevice != null) {
                 int interfaceId = m_InterfaceId++;
-                UsbSerialPortAdapter adapter = new UsbSerialPortAdapter(m_Messenger, interfaceId, connection, serialDeviceDevice);
+                UsbSerialPortAdapter adapter = new UsbSerialPortAdapter(m_Messenger, interfaceId, connection,
+                        serialDeviceDevice);
                 result.success(adapter.getMethodChannelName());
                 Log.d(TAG, "success.");
                 return;
             }
             result.error(TAG, "Not an Serial device.", null);
 
-        } catch ( java.lang.SecurityException e ) {
+        } catch (java.lang.SecurityException e) {
 
-            if ( allowAcquirePermission ) {
+            if (allowAcquirePermission) {
                 acquirePermissions(device, cb);
             } else {
                 result.error(TAG, "Failed to acquire USB permission.", null);
             }
-        } catch ( java.lang.Exception e ) {
+        } catch (java.lang.Exception e) {
             result.error(TAG, "Failed to acquire USB device.", null);
         }
     }
@@ -231,12 +230,69 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
         Map<String, UsbDevice> devices = m_Manager.getDeviceList();
         for (UsbDevice device : devices.values()) {
 
-            if ( deviceId == device.getDeviceId() || (device.getVendorId() == vid && device.getProductId() == pid) ) {
+            if (deviceId == device.getDeviceId() || (device.getVendorId() == vid && device.getProductId() == pid)) {
                 openDevice(type, device, iface, result, true);
                 return;
             }
         }
 
+        result.error(TAG, "No such device", null);
+    }
+
+    private void openRawDevice(UsbDevice device, Result result, boolean allowAcquirePermission) {
+        final AcquirePermissionCallback cb = new AcquirePermissionCallback() {
+            @Override
+            public void onSuccess(UsbDevice device) {
+                openRawDevice(device, result, false);
+            }
+
+            @Override
+            public void onFailed(UsbDevice device) {
+                result.error(TAG, "Failed to acquire permissions.", null);
+            }
+        };
+
+        Log.e(TAG, "openRawDevice called, allowAcquirePermission=" + allowAcquirePermission);
+        try {
+            UsbDeviceConnection connection = m_Manager.openDevice(device);
+            Log.e(TAG, "openRawDevice connection = " + connection);
+
+            if (connection == null && allowAcquirePermission) {
+                acquirePermissions(device, cb);
+                return;
+            }
+
+            if (connection == null) {
+                result.error(TAG, "Failed to open USB device - connection null.", null);
+                return;
+            }
+
+            int interfaceId = m_InterfaceId++;
+            UsbRawPrinterAdapter adapter = new UsbRawPrinterAdapter(m_Messenger, interfaceId, connection, device);
+            result.success(adapter.getMethodChannelName());
+            Log.e(TAG, "raw device success, channel=" + adapter.getMethodChannelName());
+
+        } catch (java.lang.SecurityException e) {
+            Log.e(TAG, "SecurityException in openRawDevice: " + e.getMessage());
+            if (allowAcquirePermission) {
+                acquirePermissions(device, cb);
+            } else {
+                result.error(TAG, "Failed to acquire USB permission.", null);
+            }
+        } catch (java.lang.Exception e) {
+            Log.e(TAG, "Exception in openRawDevice: " + e.toString());
+            result.error(TAG, "Failed to open raw USB device: " + e.getMessage(), null);
+        }
+    }
+
+    private void createRaw(int vid, int pid, int deviceId, Result result) {
+        Map<String, UsbDevice> devices = m_Manager.getDeviceList();
+        for (UsbDevice device : devices.values()) {
+            if (deviceId == device.getDeviceId() || (device.getVendorId() == vid && device.getProductId() == pid)) {
+                openRawDevice(device, result, true);
+                return;
+            }
+        }
         result.error(TAG, "No such device", null);
     }
 
@@ -249,10 +305,13 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
             dev.put("manufacturerName", device.getManufacturerName());
             dev.put("productName", device.getProductName());
             dev.put("interfaceCount", device.getInterfaceCount());
-            /* if the app targets SDK >= android.os.Build.VERSION_CODES.Q and the app does not have permission to read from the device. */
+            /*
+             * if the app targets SDK >= android.os.Build.VERSION_CODES.Q and the app does
+             * not have permission to read from the device.
+             */
             try {
                 dev.put("serialNumber", device.getSerialNumber());
-            } catch  ( java.lang.SecurityException e ) {
+            } catch (java.lang.SecurityException e) {
                 Log.e(TAG, e.toString());
             }
         }
@@ -262,7 +321,7 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
 
     private void listDevices(Result result) {
         Map<String, UsbDevice> devices = m_Manager.getDeviceList();
-        if ( devices == null ) {
+        if (devices == null) {
             result.error(TAG, "Could not get USB device list.", null);
             return;
         }
@@ -273,7 +332,6 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
         }
         result.success(transferDevices);
     }
-
 
     @Override
     public void onListen(Object o, EventChannel.EventSink eventSink) {
@@ -286,8 +344,8 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
         m_EventSink = null;
     }
 
-
     private EventChannel m_EventChannel;
+
     private void register(BinaryMessenger messenger, android.content.Context context) {
         m_Messenger = messenger;
         m_Context = context;
@@ -310,8 +368,8 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
         m_Messenger = null;
     }
 
-
-    /// This local reference serves to register the plugin with the Flutter Engine and unregister it
+    /// This local reference serves to register the plugin with the Flutter Engine
+    /// and unregister it
     /// when the Flutter Engine is detached from the Activity
     private MethodChannel m_Channel;
 
@@ -340,8 +398,17 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
                 Integer pid = call.argument("pid");
                 Integer deviceId = call.argument("deviceId");
                 Integer interfaceId = call.argument("interface");
-                if (type!=null && vid!=null && pid !=null && deviceId != null && interfaceId != null ) {
-                    createTyped(type,vid,pid,deviceId, interfaceId, result);
+                if (type != null && vid != null && pid != null && deviceId != null && interfaceId != null) {
+                    createTyped(type, vid, pid, deviceId, interfaceId, result);
+                }
+                break;
+            }
+            case "createRaw": {
+                Integer vid = call.argument("vid");
+                Integer pid = call.argument("pid");
+                Integer deviceId = call.argument("deviceId");
+                if (vid != null && pid != null && deviceId != null) {
+                    createRaw(vid, pid, deviceId, result);
                 }
                 break;
             }
@@ -352,9 +419,8 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
             default:
                 result.notImplemented();
                 break;
-            }
+        }
 
     }
 
 }
-
