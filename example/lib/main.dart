@@ -91,8 +91,8 @@ class _MyAppState extends State<MyApp> {
     devices.forEach((device) {
       _ports.add(ListTile(
           leading: Icon(Icons.usb),
-          title: Text(device.productName!),
-          subtitle: Text(device.manufacturerName!),
+          title: Text(device.productName ?? "Unknown"),
+          subtitle: Text(device.manufacturerName ?? "Unknown"),
           trailing: ElevatedButton(
             child: Text(_device == device ? "Disconnect" : "Connect"),
             onPressed: () {
@@ -112,7 +112,7 @@ class _MyAppState extends State<MyApp> {
   void initState() {
     super.initState();
 
-    UsbSerial.usbEventStream!.listen((UsbEvent event) {
+    UsbSerial.usbEventStream?.listen((UsbEvent event) {
       _getPorts();
     });
 
@@ -132,37 +132,38 @@ class _MyAppState extends State<MyApp> {
       appBar: AppBar(
         title: const Text('USB Serial Plugin example app'),
       ),
-      body: Center(
-          child: Column(children: <Widget>[
-        Text(_ports.length > 0 ? "Available Serial Ports" : "No serial devices available", style: Theme.of(context).textTheme.titleLarge),
-        ..._ports,
-        Text('Status: $_status\n'),
-        Text('info: ${_port.toString()}\n'),
-        ListTile(
-          title: TextField(
-            controller: _textController,
-            decoration: InputDecoration(
-              border: OutlineInputBorder(),
-              labelText: 'Text To Send',
+      body: ListView(
+        children: <Widget>[
+          Center(child: Text(_ports.length > 0 ? "Available Serial Ports" : "No serial devices available", style: Theme.of(context).textTheme.titleLarge)),
+          ..._ports,
+          Center(child: Text('Status: $_status\n')),
+          Center(child: Text('info: ${_port.toString()}\n')),
+          ListTile(
+            title: TextField(
+              controller: _textController,
+              decoration: InputDecoration(
+                border: OutlineInputBorder(),
+                labelText: 'Text To Send',
+              ),
+            ),
+            trailing: ElevatedButton(
+              child: Text("Send"),
+              onPressed: _port == null
+                  ? null
+                  : () async {
+                      if (_port == null) {
+                        return;
+                      }
+                      String data = _textController.text + "\r\n";
+                      await _port!.write(Uint8List.fromList(data.codeUnits));
+                      _textController.text = "";
+                    },
             ),
           ),
-          trailing: ElevatedButton(
-            child: Text("Send"),
-            onPressed: _port == null
-                ? null
-                : () async {
-                    if (_port == null) {
-                      return;
-                    }
-                    String data = _textController.text + "\r\n";
-                    await _port!.write(Uint8List.fromList(data.codeUnits));
-                    _textController.text = "";
-                  },
-          ),
-        ),
-        Text("Result Data", style: Theme.of(context).textTheme.titleLarge),
-        ..._serialData,
-      ])),
+          Center(child: Text("Result Data", style: Theme.of(context).textTheme.titleLarge)),
+          ..._serialData,
+        ],
+      ),
     ));
   }
 }
