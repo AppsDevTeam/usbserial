@@ -22,13 +22,19 @@ if git tag -l | grep -q "^${TAG}$"; then
     exit 1
 fi
 
+# Strip 'v' prefix for pubspec version (v1.2.3 -> 1.2.3)
+VERSION="${TAG#v}"
+
 # Update ref in README.md
 sed -i '' "s/ref: v[0-9]*\.[0-9]*\.[0-9]*/ref: $TAG/" README.md
 
-echo "Updated README.md ref to $TAG"
+# Update version in pubspec.yaml
+sed -i '' "s/^version: .*/version: $VERSION/" pubspec.yaml
+
+echo "Updated README.md ref to $TAG and pubspec.yaml version to $VERSION"
 
 # Commit and tag
-git add README.md
+git add README.md pubspec.yaml
 git commit -m "Release $TAG"
 git tag "$TAG"
 
