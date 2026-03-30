@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 
 import 'types.dart';
 
+export 'usb_error.dart';
+
 class _Equality {
   static final Function deepEq = const DeepCollectionEquality().equals;
   static final Function deepHash = const DeepCollectionEquality().hash;

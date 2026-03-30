@@ -94,50 +94,81 @@ public class UsbSerialPortAdapter implements MethodCallHandler, EventChannel.Str
 
     // return true if the object is to be kept, false if it is to be destroyed.
     public void onMethodCall(MethodCall call, Result result) {
-
-        switch (call.method) {
-            case "close":
-                result.success(close());
-                break;
-            case "open":
-                result.success(open());
-                break;
-            case "write":
-                write((byte[])call.argument("data"));
-                result.success(true);
-                break;
-
-            case "setPortParameters":
-                setPortParameters((int) call.argument("baudRate"), (int) call.argument("dataBits"),
-                        (int) call.argument("stopBits"), (int) call.argument("parity"));
-                result.success(null);
-                break;
-
-            case "setFlowControl":
-                setFlowControl((int) call.argument("flowControl"));
-                result.success(null);
-                break;
-
-            case "setDTR": {
-                boolean v = call.argument("value");
-                m_SerialDevice.setDTR(v);
-                if (v == true) {
-                    Log.e(TAG, "set DTR to true");
-                } else {
-                    Log.e(TAG, "set DTR to false");
+        try {
+            switch (call.method) {
+                case "close":
+                    result.success(close());
+                    break;
+                case "open":
+                    result.success(open());
+                    break;
+                case "write": {
+                    byte[] data = call.argument("data");
+                    if (data == null) {
+                        result.error(UsbErrorCode.INVALID_ARGUMENT, "Missing or invalid 'data' argument for write.", null);
+                        return;
+                    }
+                    write(data);
+                    result.success(true);
+                    break;
                 }
-                result.success(null);
-                break;
-            }
-            case "setRTS": {
-                boolean v = call.argument("value");
-                m_SerialDevice.setRTS(v);
-                result.success(null);
-                break;
-            }
 
-            default:
-                result.notImplemented();
+                case "setPortParameters": {
+                    Integer baudRate = call.argument("baudRate");
+                    Integer dataBits = call.argument("dataBits");
+                    Integer stopBits = call.argument("stopBits");
+                    Integer parity = call.argument("parity");
+                    if (baudRate == null || dataBits == null || stopBits == null || parity == null) {
+                        result.error(UsbErrorCode.INVALID_ARGUMENT, "Missing argument for setPortParameters.", null);
+                        return;
+                    }
+                    setPortParameters(baudRate, dataBits, stopBits, parity);
+                    result.success(null);
+                    break;
+                }
+
+                case "setFlowControl": {
+                    Integer flowControl = call.argument("flowControl");
+                    if (flowControl == null) {
+                        result.error(UsbErrorCode.INVALID_ARGUMENT, "Missing 'flowControl' argument.", null);
+                        return;
+                    }
+                    setFlowControl(flowControl);
+                    result.success(null);
+                    break;
+                }
+
+                case "setDTR": {
+                    Boolean v = call.argument("value");
+                    if (v == null) {
+                        result.error(UsbErrorCode.INVALID_ARGUMENT, "Missing 'value' argument for setDTR.", null);
+                        return;
+                    }
+                    m_SerialDevice.setDTR(v);
+                    Log.d(TAG, "set DTR to " + v);
+                    result.success(null);
+                    break;
+                }
+                case "setRTS": {
+                    Boolean v = call.argument("value");
+                    if (v == null) {
+                        result.error(UsbErrorCode.INVALID_ARGUMENT, "Missing 'value' argument for setRTS.", null);
+                        return;
+                    }
+                    m_SerialDevice.setRTS(v);
+                    result.success(null);
+                    break;
+                }
+
+                default:
+                    result.notImplemented();
+            }
+        } catch (SecurityException e) {
+            Log.e(TAG, "Permission denied in '" + call.method + "': " + e.getMessage(), e);
+            result.error(UsbErrorCode.PERMISSION_DENIED, "Permission denied during " + call.method + ": " + e.getMessage(), null);
+        } catch (Exception e) {
+            Log.e(TAG, "Error in '" + call.method + "': " + e.getMessage(), e);
+            result.error(UsbErrorCode.DEVICE_DISCONNECTED, "Device communication failed during " + call.method + ": " + e.getMessage(), null);
         }
     }
 
@@ -152,8 +183,4 @@ public class UsbSerialPortAdapter implements MethodCallHandler, EventChannel.Str
         m_EventSink = null;
 
     }
-
-
-
-
 }

@@ -185,7 +185,7 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
 
             @Override
             public void onFailed(UsbDevice device) {
-                result.error(TAG, "Failed to acquire permissions.", null);
+                result.error(UsbErrorCode.PERMISSION_DENIED, "Failed to acquire USB permissions.", null);
             }
         };
 
@@ -212,17 +212,17 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
                 Log.d(TAG, "success.");
                 return;
             }
-            result.error(TAG, "Not an Serial device.", null);
+            result.error(UsbErrorCode.DEVICE_OPEN_FAILED, "Not a serial device.", null);
 
         } catch (java.lang.SecurityException e) {
 
             if (allowAcquirePermission) {
                 acquirePermissions(device, cb);
             } else {
-                result.error(TAG, "Failed to acquire USB permission.", null);
+                result.error(UsbErrorCode.PERMISSION_DENIED, "Failed to acquire USB permission: " + e.getMessage(), null);
             }
         } catch (java.lang.Exception e) {
-            result.error(TAG, "Failed to acquire USB device.", null);
+            result.error(UsbErrorCode.DEVICE_OPEN_FAILED, "Failed to open USB device: " + e.getMessage(), null);
         }
     }
 
@@ -236,7 +236,7 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
             }
         }
 
-        result.error(TAG, "No such device", null);
+        result.error(UsbErrorCode.DEVICE_NOT_FOUND, "No USB device found matching the given vid/pid/deviceId.", null);
     }
 
     private void openRawDevice(UsbDevice device, Result result, boolean allowAcquirePermission) {
@@ -248,7 +248,7 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
 
             @Override
             public void onFailed(UsbDevice device) {
-                result.error(TAG, "Failed to acquire permissions.", null);
+                result.error(UsbErrorCode.PERMISSION_DENIED, "Failed to acquire USB permissions.", null);
             }
         };
 
@@ -263,7 +263,7 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
             }
 
             if (connection == null) {
-                result.error(TAG, "Failed to open USB device - connection null.", null);
+                result.error(UsbErrorCode.DEVICE_OPEN_FAILED, "Failed to open USB device - connection is null.", null);
                 return;
             }
 
@@ -277,11 +277,11 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
             if (allowAcquirePermission) {
                 acquirePermissions(device, cb);
             } else {
-                result.error(TAG, "Failed to acquire USB permission.", null);
+                result.error(UsbErrorCode.PERMISSION_DENIED, "Failed to acquire USB permission: " + e.getMessage(), null);
             }
         } catch (java.lang.Exception e) {
             Log.e(TAG, "Exception in openRawDevice: " + e.toString());
-            result.error(TAG, "Failed to open raw USB device: " + e.getMessage(), null);
+            result.error(UsbErrorCode.DEVICE_OPEN_FAILED, "Failed to open raw USB device: " + e.getMessage(), null);
         }
     }
 
@@ -293,7 +293,7 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
                 return;
             }
         }
-        result.error(TAG, "No such device", null);
+        result.error(UsbErrorCode.DEVICE_NOT_FOUND, "No USB device found matching the given vid/pid/deviceId.", null);
     }
 
     private HashMap<String, Object> serializeDevice(UsbDevice device) {
@@ -322,7 +322,7 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
     private void listDevices(Result result) {
         Map<String, UsbDevice> devices = m_Manager.getDeviceList();
         if (devices == null) {
-            result.error(TAG, "Could not get USB device list.", null);
+            result.error(UsbErrorCode.UNKNOWN, "Could not get USB device list.", null);
             return;
         }
         List<HashMap<String, Object>> transferDevices = new ArrayList<>();
