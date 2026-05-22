@@ -19,7 +19,7 @@ dependencies:
   usb_serial:
     git:
       url: https://github.com/AppsDevTeam/usbserial.git
-      ref: v0.7.0
+      ref: v0.8.0
 ```
 
 include the usbserial package at the top of your dart file.
