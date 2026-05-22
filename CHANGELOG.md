@@ -1,3 +1,13 @@
+## 0.8.0
+* Raw USB printer adapter now claims the bulk IN endpoint when the USB
+  Printer Class device exposes one (interface protocol 2/3, bidirectional).
+  A background reader thread forwards incoming bytes to the existing
+  EventChannel, so the Dart side `port.inputStream` finally produces
+  data on these devices — enabling DLE EOT real-time status queries and
+  Automatic Status Back (ASB) reception over USB.
+* `close()` resets the cached `UsbInterface` / `UsbEndpoint` references so
+  a subsequent `open()` on a re-attached device starts from a clean state.
+
 ## 0.5.1
 * Improve Java handling of null pointers.
 * Update gradle version on sample.

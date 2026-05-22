@@ -5,6 +5,8 @@ import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbEndpoint;
 import android.hardware.usb.UsbInterface;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import io.flutter.plugin.common.BinaryMessenger;
 import io.flutter.plugin.common.EventChannel;
@@ -25,9 +27,14 @@ public class UsbRawPrinterAdapter implements MethodCallHandler, EventChannel.Str
     private final UsbDeviceConnection m_Connection;
     private final UsbDevice m_Device;
     private final String m_MethodChannelName;
+    private final Handler m_MainHandler = new Handler(Looper.getMainLooper());
     private UsbInterface m_Interface;
     private UsbEndpoint m_EndpointOut;
+    private UsbEndpoint m_EndpointIn;
     private boolean m_IsOpen = false;
+    private volatile EventChannel.EventSink m_EventSink;
+    private volatile boolean m_Reading = false;
+    private Thread m_ReaderThread;
 
     UsbRawPrinterAdapter(BinaryMessenger messenger, int interfaceId, UsbDeviceConnection connection, UsbDevice device) {
         m_Connection = connection;
@@ -47,7 +54,10 @@ public class UsbRawPrinterAdapter implements MethodCallHandler, EventChannel.Str
 
     private void open(Result result) {
         try {
-            // Find bulk OUT endpoint
+            // Find an interface that has a bulk OUT endpoint, then look for
+            // a bulk IN endpoint on the same interface (USB Printer Class
+            // bidirectional devices report both — protocol=2/3 — and the IN
+            // endpoint carries ASB status pushes from the printer).
             for (int i = 0; i < m_Device.getInterfaceCount(); i++) {
                 UsbInterface usbInterface = m_Device.getInterface(i);
                 Log.d(TAG, "Interface " + i + ": class=" + usbInterface.getInterfaceClass()
@@ -55,20 +65,33 @@ public class UsbRawPrinterAdapter implements MethodCallHandler, EventChannel.Str
                         + " protocol=" + usbInterface.getInterfaceProtocol()
                         + " endpoints=" + usbInterface.getEndpointCount());
 
+                UsbEndpoint candidateOut = null;
+                UsbEndpoint candidateIn = null;
                 for (int j = 0; j < usbInterface.getEndpointCount(); j++) {
                     UsbEndpoint endpoint = usbInterface.getEndpoint(j);
                     Log.d(TAG, "  Endpoint " + j + ": type=" + endpoint.getType()
                             + " direction=" + endpoint.getDirection());
 
-                    if (endpoint.getType() == UsbConstants.USB_ENDPOINT_XFER_BULK
-                            && endpoint.getDirection() == UsbConstants.USB_DIR_OUT) {
-                        m_Interface = usbInterface;
-                        m_EndpointOut = endpoint;
-                        break;
+                    if (endpoint.getType() != UsbConstants.USB_ENDPOINT_XFER_BULK) continue;
+
+                    if (endpoint.getDirection() == UsbConstants.USB_DIR_OUT && candidateOut == null) {
+                        candidateOut = endpoint;
+                    } else if (endpoint.getDirection() == UsbConstants.USB_DIR_IN && candidateIn == null) {
+                        candidateIn = endpoint;
                     }
                 }
-                if (m_EndpointOut != null)
+
+                if (candidateOut != null) {
+                    m_Interface = usbInterface;
+                    m_EndpointOut = candidateOut;
+                    m_EndpointIn = candidateIn;
+                    if (candidateIn != null) {
+                        Log.d(TAG, "Bulk IN endpoint found: maxPacketSize=" + candidateIn.getMaxPacketSize());
+                    } else {
+                        Log.d(TAG, "No bulk IN endpoint on this interface — reads disabled");
+                    }
                     break;
+                }
             }
 
             if (m_EndpointOut == null) {
@@ -86,6 +109,14 @@ public class UsbRawPrinterAdapter implements MethodCallHandler, EventChannel.Str
 
             m_IsOpen = true;
             Log.d(TAG, "Raw USB printer opened successfully");
+
+            // If a bulk IN endpoint is present, start the reader thread so
+            // ASB / status-query responses are forwarded to the Dart side
+            // via the existing EventChannel.
+            if (m_EndpointIn != null) {
+                startReader();
+            }
+
             result.success(true);
         } catch (SecurityException e) {
             Log.e(TAG, "Permission denied during open: " + e.getMessage(), e);
@@ -98,16 +129,81 @@ public class UsbRawPrinterAdapter implements MethodCallHandler, EventChannel.Str
 
     private void close(Result result) {
         try {
+            stopReader();
             if (m_Interface != null) {
                 m_Connection.releaseInterface(m_Interface);
             }
             m_Connection.close();
             m_IsOpen = false;
+            // Reset endpoint references so a subsequent reopen on a
+            // re-attached device starts from a clean state instead of
+            // pointing at stale UsbEndpoint/UsbInterface objects.
+            m_Interface = null;
+            m_EndpointOut = null;
+            m_EndpointIn = null;
             result.success(true);
         } catch (Exception e) {
             Log.e(TAG, "Error during close: " + e.getMessage(), e);
             m_IsOpen = false;
+            m_Interface = null;
+            m_EndpointOut = null;
+            m_EndpointIn = null;
             result.error(UsbErrorCode.DEVICE_DISCONNECTED, "Device communication failed during close: " + e.getMessage(), null);
+        }
+    }
+
+    private void startReader() {
+        if (m_EndpointIn == null || m_Reading || !m_IsOpen) return;
+        final UsbEndpoint endpoint = m_EndpointIn;
+        // Cap buffer at a reasonable size — ASB packets are 4 bytes, but the
+        // endpoint may have larger maxPacketSize. We just want enough to
+        // grab a full packet in one transfer.
+        final int bufferSize = Math.max(64, endpoint.getMaxPacketSize());
+        m_Reading = true;
+        m_ReaderThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                byte[] buffer = new byte[bufferSize];
+                while (m_Reading) {
+                    int transferred;
+                    try {
+                        // Short timeout so the thread can exit promptly on stopReader().
+                        transferred = m_Connection.bulkTransfer(endpoint, buffer, bufferSize, 1000);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Reader thread bulkTransfer failed: " + e.getMessage());
+                        break;
+                    }
+                    if (transferred > 0) {
+                        final byte[] payload = new byte[transferred];
+                        System.arraycopy(buffer, 0, payload, 0, transferred);
+                        m_MainHandler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                EventChannel.EventSink sink = m_EventSink;
+                                if (sink != null) sink.success(payload);
+                            }
+                        });
+                    }
+                    // transferred < 0 → timeout / no data — loop again.
+                }
+                Log.d(TAG, "Reader thread exiting");
+            }
+        }, "UsbRawPrinterAdapter-Reader");
+        m_ReaderThread.setDaemon(true);
+        m_ReaderThread.start();
+        Log.d(TAG, "Reader thread started (bufferSize=" + bufferSize + ")");
+    }
+
+    private void stopReader() {
+        if (!m_Reading) return;
+        m_Reading = false;
+        if (m_ReaderThread != null) {
+            try {
+                m_ReaderThread.join(1500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            m_ReaderThread = null;
         }
     }
 
@@ -142,12 +238,17 @@ public class UsbRawPrinterAdapter implements MethodCallHandler, EventChannel.Str
 
     @Override
     public void onListen(Object arguments, EventChannel.EventSink eventSink) {
-        // Raw printers don't receive data, so nothing to stream
+        // Bidirectional USB Printer Class devices (protocol=2/3) expose a
+        // bulk IN endpoint — when the Dart side subscribes, hand it the
+        // sink so the already-running reader thread can forward incoming
+        // bytes. Devices without a bulk IN endpoint will simply never
+        // emit any events.
+        m_EventSink = eventSink;
     }
 
     @Override
     public void onCancel(Object arguments) {
-        // No-op
+        m_EventSink = null;
     }
 
     @Override
