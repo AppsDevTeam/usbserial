@@ -15,8 +15,11 @@ import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.hardware.usb.UsbConstants;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbDeviceConnection;
+import android.hardware.usb.UsbEndpoint;
+import android.hardware.usb.UsbInterface;
 import android.hardware.usb.UsbManager;
 import android.os.Build;
 import android.util.Log;
@@ -99,6 +102,15 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
         m_InterfaceId = 0;
     }
 
+    private static UsbDevice deviceFromIntent(Intent intent) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            return intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice.class);
+        }
+        @SuppressWarnings("deprecation")
+        UsbDevice ret = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+        return ret;
+    }
+
     private interface AcquirePermissionCallback {
         void onSuccess(UsbDevice device);
 
@@ -122,13 +134,23 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
             public void onReceive(Context context, Intent intent) {
                 String action = intent.getAction();
                 if (ACTION_USB_PERMISSION.equals(action)) {
+                    // Several permission requests can be in flight at once (a
+                    // till with more than one USB printer). Every receiver sees
+                    // every answer, so ignore the ones meant for another device
+                    // instead of resolving this request with someone else's
+                    // reply — and stay registered while waiting for our own.
+                    UsbDevice answered = deviceFromIntent(intent);
+                    if (answered != null && m_Device != null
+                            && answered.getDeviceId() != m_Device.getDeviceId()) {
+                        Log.d(TAG, "permission answer for another device, ignoring");
+                        return;
+                    }
+
                     Log.e(TAG, "BroadcastReceiver intent arrived, entering sync...");
                     m_Context.unregisterReceiver(this);
                     synchronized (this) {
                         Log.e(TAG, "BroadcastReceiver in sync");
-                        /* UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE); */
                         if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
-                            // createPort(m_DriverIndex, m_PortIndex, m_Result, false);
                             m_CB.onSuccess(m_Device);
                         } else {
                             Log.d(TAG, "permission denied for device ");
@@ -161,7 +183,11 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
             // Not too important to throw anything
         }
 
-        PendingIntent permissionIntent = PendingIntent.getBroadcast(cw, 0, intent, flags);
+        // Request code must differ per device, otherwise getBroadcast() hands
+        // back the same PendingIntent for a second device and the two requests
+        // collide.
+        PendingIntent permissionIntent =
+                PendingIntent.getBroadcast(cw, device.getDeviceId(), intent, flags);
 
         IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
 
@@ -316,7 +342,48 @@ public class UsbSerialPlugin implements FlutterPlugin, MethodCallHandler, EventC
             }
         }
         dev.put("deviceId", device.getDeviceId());
+
+        // Device- and interface-level descriptors. Callers need these to tell a
+        // printer (interface class 7) or a serial bridge apart from a hub
+        // (device class 9) without opening the device — probing a hub with
+        // serial drivers resets it and takes every device behind it down.
+        dev.put("deviceClass", device.getDeviceClass());
+        dev.put("deviceSubclass", device.getDeviceSubclass());
+        dev.put("deviceProtocol", device.getDeviceProtocol());
+        dev.put("interfaces", serializeInterfaces(device));
+
         return dev;
+    }
+
+    private List<HashMap<String, Object>> serializeInterfaces(UsbDevice device) {
+        List<HashMap<String, Object>> interfaces = new ArrayList<>();
+
+        for (int i = 0; i < device.getInterfaceCount(); i++) {
+            UsbInterface usbInterface = device.getInterface(i);
+            HashMap<String, Object> serialized = new HashMap<>();
+            serialized.put("id", usbInterface.getId());
+            serialized.put("interfaceClass", usbInterface.getInterfaceClass());
+            serialized.put("interfaceSubclass", usbInterface.getInterfaceSubclass());
+            serialized.put("interfaceProtocol", usbInterface.getInterfaceProtocol());
+
+            boolean hasBulkIn = false;
+            boolean hasBulkOut = false;
+            for (int j = 0; j < usbInterface.getEndpointCount(); j++) {
+                UsbEndpoint endpoint = usbInterface.getEndpoint(j);
+                if (endpoint.getType() != UsbConstants.USB_ENDPOINT_XFER_BULK) continue;
+                if (endpoint.getDirection() == UsbConstants.USB_DIR_IN) {
+                    hasBulkIn = true;
+                } else {
+                    hasBulkOut = true;
+                }
+            }
+            serialized.put("hasBulkIn", hasBulkIn);
+            serialized.put("hasBulkOut", hasBulkOut);
+
+            interfaces.add(serialized);
+        }
+
+        return interfaces;
     }
 
     private void listDevices(Result result) {

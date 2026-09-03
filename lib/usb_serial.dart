@@ -281,6 +281,53 @@ class UsbPort extends AsyncDataSinkSource {
   }
 }
 
+/// Descriptor of a single USB interface exposed by a [UsbDevice].
+///
+/// Lets callers classify a device without opening it — interface class 7 is
+/// the USB Printer class, 2/10 are CDC, 255 is vendor specific.
+class UsbInterfaceInfo {
+  /// USB Printer class (bulk transfer, no serial protocol).
+  static const int classPrinter = 7;
+
+  /// USB Hub class — never a printer, and probing one resets everything
+  /// attached behind it.
+  static const int classHub = 9;
+
+  /// CDC communication class, used by USB-to-UART bridges.
+  static const int classCdc = 2;
+
+  final int? id;
+  final int? interfaceClass;
+  final int? interfaceSubclass;
+  final int? interfaceProtocol;
+
+  /// Whether this interface exposes a bulk IN endpoint (device to host).
+  final bool hasBulkIn;
+
+  /// Whether this interface exposes a bulk OUT endpoint (host to device).
+  final bool hasBulkOut;
+
+  const UsbInterfaceInfo(this.id, this.interfaceClass, this.interfaceSubclass, this.interfaceProtocol, this.hasBulkIn,
+      this.hasBulkOut);
+
+  static UsbInterfaceInfo fromJSON(dynamic json) {
+    return UsbInterfaceInfo(
+      json["id"],
+      json["interfaceClass"],
+      json["interfaceSubclass"],
+      json["interfaceProtocol"],
+      json["hasBulkIn"] == true,
+      json["hasBulkOut"] == true,
+    );
+  }
+
+  @override
+  String toString() {
+    return "UsbInterfaceInfo: id=$id class=$interfaceClass subclass=$interfaceSubclass "
+        "protocol=$interfaceProtocol bulkIn=$hasBulkIn bulkOut=$hasBulkOut";
+  }
+}
+
 /// UsbDevice holds the USB device information
 ///
 /// This is used to determine which Usb Device to open.
@@ -310,12 +357,56 @@ class UsbDevice {
   /// The number of interfaces on this UsbPort
   final int? interfaceCount;
 
+  /// Device level USB class. 9 means the device is a hub — see
+  /// [UsbInterfaceInfo.classHub]. Composite devices report 0 here and carry
+  /// the real class on each interface.
+  final int? deviceClass;
+
+  final int? deviceSubclass;
+
+  final int? deviceProtocol;
+
+  /// Descriptors of every interface this device exposes.
+  final List<UsbInterfaceInfo> interfaces;
+
   UsbDevice(this.deviceName, this.vid, this.pid, this.productName, this.manufacturerName, this.deviceId, this.serial,
-      this.interfaceCount);
+      this.interfaceCount,
+      [this.deviceClass, this.deviceSubclass, this.deviceProtocol, this.interfaces = const <UsbInterfaceInfo>[]]);
+
+  /// True when this device is a USB hub. Hubs must never be opened with a
+  /// serial driver — the probing control transfers reset the hub and take
+  /// every device behind it off the bus.
+  bool get isHub =>
+      deviceClass == UsbInterfaceInfo.classHub ||
+      (interfaces.isNotEmpty &&
+          interfaces.every((UsbInterfaceInfo i) => i.interfaceClass == UsbInterfaceInfo.classHub));
+
+  /// True when the device exposes a USB Printer class interface. Such devices
+  /// speak plain bulk transfer and must be opened with
+  /// [UsbSerial.createRawFromDeviceId], never with a serial driver.
+  bool get isPrinterClass =>
+      interfaces.any((UsbInterfaceInfo i) => i.interfaceClass == UsbInterfaceInfo.classPrinter);
+
+  /// True when any interface can carry data out to the device. A device
+  /// without a bulk OUT endpoint can never be printed to.
+  bool get hasBulkOut => interfaces.any((UsbInterfaceInfo i) => i.hasBulkOut);
 
   static UsbDevice fromJSON(dynamic json) {
-    return UsbDevice(json["deviceName"], json["vid"], json["pid"], json["productName"], json["manufacturerName"],
-        json["deviceId"], json["serialNumber"], json["interfaceCount"]);
+    final List<dynamic> rawInterfaces = json["interfaces"] as List<dynamic>? ?? <dynamic>[];
+    return UsbDevice(
+      json["deviceName"],
+      json["vid"],
+      json["pid"],
+      json["productName"],
+      json["manufacturerName"],
+      json["deviceId"],
+      json["serialNumber"],
+      json["interfaceCount"],
+      json["deviceClass"],
+      json["deviceSubclass"],
+      json["deviceProtocol"],
+      rawInterfaces.map<UsbInterfaceInfo>(UsbInterfaceInfo.fromJSON).toList(),
+    );
   }
 
   @override

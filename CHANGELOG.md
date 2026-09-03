@@ -1,3 +1,26 @@
+## 0.9.0
+* `listDevices()` now reports the USB descriptor data needed to classify a
+  device without opening it: `deviceClass`, `deviceSubclass`, `deviceProtocol`
+  and a per-interface list carrying interface class/subclass/protocol plus
+  whether the interface exposes bulk IN / bulk OUT endpoints. On the Dart side
+  these arrive as `UsbDevice.deviceClass`, `UsbDevice.interfaces`
+  (`UsbInterfaceInfo`) and the derived `isHub`, `isPrinterClass` and
+  `hasBulkOut` helpers. Nothing is filtered — `listDevices()` still returns
+  every device the platform enumerates.
+* Blocking USB work no longer runs on the main thread. `open()`, `close()`,
+  `write()` and the port parameter setters are dispatched to a per-adapter
+  single worker thread — one thread, so write ordering is preserved — and
+  their results are posted back to the main thread via the new
+  `MainThreadResult`. A serial driver handed a device that speaks a different
+  protocol blocks on control transfers for seconds, which previously froze the
+  host app's UI thread long enough to ANR.
+* Concurrent permission requests no longer collide. `PendingIntent` is now
+  keyed by device id instead of request code `0` for every device, and the
+  receiver checks `EXTRA_DEVICE` before resolving, staying registered while
+  the answer belongs to someone else. Previously a single answer resolved
+  every pending request, so with two devices in flight the second one silently
+  failed to open.
+
 ## 0.8.0
 * Raw USB printer adapter now claims the bulk IN endpoint when the USB
   Printer Class device exposes one (interface protocol 2/3, bidirectional).

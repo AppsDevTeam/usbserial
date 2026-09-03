@@ -15,6 +15,9 @@ import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
 import io.flutter.plugin.common.MethodChannel.Result;
 
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 /**
  * Raw USB bulk transfer adapter for printers that don't use serial protocols.
  * Communicates directly via USB bulk OUT endpoint.
@@ -35,6 +38,11 @@ public class UsbRawPrinterAdapter implements MethodCallHandler, EventChannel.Str
     private volatile EventChannel.EventSink m_EventSink;
     private volatile boolean m_Reading = false;
     private Thread m_ReaderThread;
+
+    // Single worker thread: keeps writes in order while keeping the blocking
+    // bulk transfers off the main thread. A full receipt is hundreds of
+    // 64-byte transfers, each with a 5 s timeout.
+    private final ExecutorService m_Executor = Executors.newSingleThreadExecutor();
 
     UsbRawPrinterAdapter(BinaryMessenger messenger, int interfaceId, UsbDeviceConnection connection, UsbDevice device) {
         m_Connection = connection;
@@ -252,7 +260,17 @@ public class UsbRawPrinterAdapter implements MethodCallHandler, EventChannel.Str
     }
 
     @Override
-    public void onMethodCall(MethodCall call, Result result) {
+    public void onMethodCall(final MethodCall call, final Result result) {
+        final Result mainThreadResult = new MainThreadResult(result);
+        m_Executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                handleMethodCall(call, mainThreadResult);
+            }
+        });
+    }
+
+    private void handleMethodCall(MethodCall call, Result result) {
         switch (call.method) {
             case "open":
                 open(result);

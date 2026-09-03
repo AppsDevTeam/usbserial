@@ -15,6 +15,9 @@ import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
 import io.flutter.plugin.common.MethodChannel.Result;
 import io.flutter.plugin.common.BinaryMessenger;
 
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 public class UsbSerialPortAdapter implements MethodCallHandler, EventChannel.StreamHandler {
 
     private final String TAG = UsbSerialPortAdapter.class.getSimpleName();
@@ -26,6 +29,11 @@ public class UsbSerialPortAdapter implements MethodCallHandler, EventChannel.Str
     private String m_MethodChannelName;
     private EventChannel.EventSink m_EventSink;
     private Handler m_handler;
+
+    // Single worker thread: keeps writes in order while keeping every blocking
+    // USB call off the main thread. A serial driver probing a device that
+    // isn't a serial device blocks on control transfers long enough to ANR.
+    private final ExecutorService m_Executor = Executors.newSingleThreadExecutor();
 
     UsbSerialPortAdapter(BinaryMessenger messenger, int interfaceId, UsbDeviceConnection connection, UsbSerialDevice serialDevice) {
         m_Messenger = messenger;
@@ -93,7 +101,17 @@ public class UsbSerialPortAdapter implements MethodCallHandler, EventChannel.Str
     }
 
     // return true if the object is to be kept, false if it is to be destroyed.
-    public void onMethodCall(MethodCall call, Result result) {
+    public void onMethodCall(final MethodCall call, final Result result) {
+        final Result mainThreadResult = new MainThreadResult(result);
+        m_Executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                handleMethodCall(call, mainThreadResult);
+            }
+        });
+    }
+
+    private void handleMethodCall(MethodCall call, Result result) {
         try {
             switch (call.method) {
                 case "close":
