@@ -1,3 +1,28 @@
+## 0.9.1
+* The raw USB printer reader no longer floods the host app's main thread.
+  Some printers (seen on VID:PID 1155:22339) answer every bulk IN poll with
+  their status byte, thousands of times a second. The reader forwarded each
+  read as its own event, posted through the main thread to Dart, which kept the
+  main thread 75–90 % busy for as long as the printer was connected — every
+  platform channel answer, touch and keyboard event waited behind it. Reads are
+  now paced (at most one every 20 ms), forwarded bytes go to Dart in batches
+  (at most one event every 50 ms), and nothing is forwarded while nobody
+  listens. Repeats of the same bytes are dropped unless they come within 3 s of
+  a write (the answer to a status query) or of a change, so a change of state
+  still reaches Dart in full. The main thread with such a printer connected now
+  costs about the same as without one.
+* Raw USB transfers no longer hold off the garbage collector.
+  `UsbDeviceConnection.bulkTransfer` pins its Java array as a JNI critical
+  section for the whole transfer, which blocks the garbage collector and every
+  thread that touches a pinned array meanwhile — up to the 1 s read timeout on
+  each idle read, up to the 5 s write timeout on a printer that stopped
+  accepting data (measured: 4.3 s). Reads and writes now go through
+  `UsbRequest` with direct buffers on API 26+; the reader reaps the writes'
+  requests too, since `requestWait` returns whichever request finished. Older
+  systems keep `bulkTransfer`.
+* The reader stops when the device leaves the bus instead of spinning on the
+  failed transfer.
+
 ## 0.9.0
 * `listDevices()` now reports the USB descriptor data needed to classify a
   device without opening it: `deviceClass`, `deviceSubclass`, `deviceProtocol`
